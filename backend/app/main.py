@@ -1,12 +1,19 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.routes.chat import router as chat_router
+
+
 app = FastAPI(
     title="Pranexa API",
     version="0.1.0",
 )
 
-# Allow the Next.js frontend to communicate with FastAPI
+
+# --------------------------------------------------
+# CORS
+# --------------------------------------------------
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -20,21 +27,21 @@ app.add_middleware(
 )
 
 
+# --------------------------------------------------
+# Routes
+# --------------------------------------------------
+
+app.include_router(chat_router)
+
+
+# --------------------------------------------------
+# Root endpoint
+# --------------------------------------------------
+
 @app.get("/")
-def root():
+async def root():
     return {
         "service": "Pranexa API",
         "version": "0.1.0",
         "status": "running",
-    }
-
-
-@app.post("/api/v1/chat")
-def chat(request: dict):
-    message = request.get("message", "")
-    mode = request.get("mode", "explain")
-
-    return {
-        "response": f"Pranexa received your message: {message}",
-        "mode": mode,
     }

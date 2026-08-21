@@ -1,27 +1,47 @@
+# =========================
 # Python
+# =========================
 __pycache__/
 *.py[cod]
 *.pyo
 .venv/
 venv/
+
+# =========================
+# Environment / Secrets
+# =========================
 .env
 .env.*
+!.env.example
 
-# Node
+# =========================
+# Node / Next.js
+# =========================
 node_modules/
 .next/
 out/
 
-# Environment
+# =========================
+# Local Environment
+# =========================
 .env.local
 .env.development.local
 .env.test.local
 .env.production.local
 
+# =========================
+# Archives
+# =========================
+*.zip
+
+# =========================
 # OS
+# =========================
 .DS_Store
 Thumbs.db
 
+# =========================
 # IDE
+# =========================
 .vscode/
 .idea/

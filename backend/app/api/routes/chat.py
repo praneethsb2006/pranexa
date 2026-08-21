@@ -1,26 +1,12 @@
 from fastapi import APIRouter
-from pydantic import BaseModel
+
+from app.schemas.chat import ChatRequest, ChatResponse
+from app.services.chat_service import process_chat
 
 
-router = APIRouter(
-    prefix="/api/v1/chat",
-    tags=["Chat"],
-)
+router = APIRouter()
 
 
-class ChatRequest(BaseModel):
-    message: str
-    mode: str = "explain"
-
-
-class ChatResponse(BaseModel):
-    response: str
-    mode: str
-
-
-@router.post("")
+@router.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest) -> ChatResponse:
-    return ChatResponse(
-        response=f"Pranexa received your message: {request.message}",
-        mode=request.mode,
-    )
+    return await process_chat(request)
