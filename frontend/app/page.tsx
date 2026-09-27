@@ -12,11 +12,6 @@ type Message = {
   content: string;
 };
 
-type ApiHistoryMessage = {
-  role: "user" | "assistant";
-  content: string;
-};
-
 type ChatResponse = {
   response?: string;
   mode?: string;
@@ -136,14 +131,6 @@ export default function Home() {
       return;
     }
 
-    /*
-     * Save the history BEFORE adding the new user message.
-     */
-    const history: ApiHistoryMessage[] = messages.map((item) => ({
-      role: item.role,
-      content: item.content,
-    }));
-
     const userMessageObject: Message = {
       id: crypto.randomUUID(),
       role: "user",
@@ -168,7 +155,6 @@ export default function Home() {
         body: JSON.stringify({
           message: userMessage,
           mode,
-          history,
           conversation_id: conversationId,
         }),
       });

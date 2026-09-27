@@ -1,20 +1,53 @@
+from fastapi import HTTPException
+
 from app.database.supabase_client import supabase
-from app.schemas.chat import ChatRequest, ChatResponse
+from app.schemas.chat import ChatMessage, ChatRequest, ChatResponse
 from app.services.ai_service import generate_ai_response
 
 
+MAX_HISTORY_MESSAGES = 50
+
+
 async def process_chat(request: ChatRequest) -> ChatResponse:
+    history: list[ChatMessage] = []
 
     # --------------------------------------------------
     # 1. Get existing conversation OR create a new one
     # --------------------------------------------------
 
     if request.conversation_id:
-        # Continue an existing conversation
         conversation_id = request.conversation_id
 
+        conversation_result = (
+            supabase
+            .table("conversations")
+            .select("id")
+            .eq("id", conversation_id)
+            .limit(1)
+            .execute()
+        )
+
+        if not conversation_result.data:
+            raise HTTPException(
+                status_code=404,
+                detail="Conversation not found.",
+            )
+
+        history_result = (
+            supabase
+            .table("messages")
+            .select("role,content")
+            .eq("conversation_id", conversation_id)
+            .order("created_at", desc=True)
+            .limit(MAX_HISTORY_MESSAGES)
+            .execute()
+        )
+        history = [
+            ChatMessage.model_validate(message)
+            for message in reversed(history_result.data or [])
+        ]
+
     else:
-        # Create a brand-new conversation
         conversation_result = (
             supabase
             .table("conversations")
@@ -55,7 +88,7 @@ async def process_chat(request: ChatRequest) -> ChatResponse:
     response = await generate_ai_response(
         message=request.message,
         mode=request.mode,
-        history=request.history,
+        history=history,
     )
 
     # --------------------------------------------------
