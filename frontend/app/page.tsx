@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 type ChatMode = "explain" | "learn" | "solve";
 
@@ -10,7 +12,23 @@ type Message = {
   content: string;
 };
 
-const API_URL = "http://127.0.0.1:8000/api/v1/chat";
+type ApiHistoryMessage = {
+  role: "user" | "assistant";
+  content: string;
+};
+
+type ChatResponse = {
+  response?: string;
+  mode?: string;
+  conversation_id?: string;
+};
+
+type Conversation = {
+  id: string;
+  title: string;
+  created_at: string;
+};
+const API_URL = "http://127.0.0.1:8000/chat";
 
 const modeLabels: Record<ChatMode, string> = {
   explain: "Explain mode",
@@ -23,6 +41,80 @@ export default function Home() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(false);
   const [mode, setMode] = useState<ChatMode>("explain");
+
+  // ---------------------------------------------------------
+  // Conversation ID
+  // ---------------------------------------------------------
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [conversationsLoading, setConversationsLoading] = useState(true);
+  const [conversationMessagesLoading, setConversationMessagesLoading] = useState(false);
+
+  useEffect(() => {
+  const loadConversations = async () => {
+    try {
+      const response = await fetch(
+        "http://127.0.0.1:8000/conversations"
+      );
+
+      if (!response.ok) {
+        throw new Error("Failed to load conversations");
+      }
+
+      const data = await response.json();
+
+      setConversations(data.conversations ?? []);
+    } catch (error) {
+      console.error("Failed to load conversations:", error);
+    } finally {
+      setConversationsLoading(false);
+    }
+  };
+
+  loadConversations();
+}, []);
+
+  const loadConversation = async (selectedConversationId: string) => {
+    if (loading || conversationMessagesLoading) {
+      return;
+    }
+
+    setConversationMessagesLoading(true);
+    setConversationId(selectedConversationId);
+
+    try {
+      const response = await fetch(
+        `http://127.0.0.1:8000/conversations/${selectedConversationId}/messages`
+      );
+
+      if (!response.ok) {
+        throw new Error(
+          `Failed to load conversation (${response.status})`
+        );
+      }
+
+      const data = await response.json();
+
+      const loadedMessages: Message[] = (data.messages ?? []).map(
+        (item: {
+          id: string;
+          role: "user" | "assistant";
+          content: string;
+        }) => ({
+          id: item.id,
+          role: item.role,
+          content: item.content,
+        })
+      );
+
+      setMessages(loadedMessages);
+      setMessage("");
+    } catch (error) {
+      console.error("Failed to load conversation:", error);
+    } finally {
+      setConversationMessagesLoading(false);
+    }
+  };
 
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
@@ -44,6 +136,14 @@ export default function Home() {
       return;
     }
 
+    /*
+     * Save the history BEFORE adding the new user message.
+     */
+    const history: ApiHistoryMessage[] = messages.map((item) => ({
+      role: item.role,
+      content: item.content,
+    }));
+
     const userMessageObject: Message = {
       id: crypto.randomUUID(),
       role: "user",
@@ -63,10 +163,13 @@ export default function Home() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          Accept: "application/json",
         },
         body: JSON.stringify({
           message: userMessage,
           mode,
+          history,
+          conversation_id: conversationId,
         }),
       });
 
@@ -76,10 +179,15 @@ export default function Home() {
         );
       }
 
-      const data: {
-        response?: string;
-        mode?: string;
-      } = await apiResponse.json();
+      const data: ChatResponse = await apiResponse.json();
+
+      // -----------------------------------------------------
+      // Save the conversation ID returned by the backend
+      // -----------------------------------------------------
+
+      if (data.conversation_id) {
+        setConversationId(data.conversation_id);
+      }
 
       const assistantMessage: Message = {
         id: crypto.randomUUID(),
@@ -134,6 +242,10 @@ export default function Home() {
     setMessage("");
     setMode("explain");
 
+    // IMPORTANT:
+    // A new chat must get a new conversation.
+    setConversationId(null);
+
     textareaRef.current?.focus();
   };
 
@@ -152,7 +264,7 @@ export default function Home() {
     <main className="min-h-screen bg-[#f7f7f5] text-[#1f1f1f]">
       <div className="flex min-h-screen">
 
-        {/* Sidebar */}
+        {/* SIDEBAR */}
         <aside className="hidden w-[260px] shrink-0 flex-col border-r border-black/5 bg-[#efefec] px-4 py-5 md:flex">
 
           {/* Logo */}
@@ -183,6 +295,7 @@ export default function Home() {
           </div>
 
           <nav className="space-y-1">
+
             <button
               type="button"
               className="flex w-full items-center gap-3 rounded-xl bg-black/5 px-3 py-2.5 text-sm"
@@ -195,7 +308,7 @@ export default function Home() {
               type="button"
               className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition hover:bg-black/5"
             >
-              <span>▣</span>
+              <span>□</span>
               Documents
             </button>
 
@@ -211,6 +324,7 @@ export default function Home() {
               <span>✦</span>
               Learn
             </button>
+
           </nav>
 
           {/* Recent */}
@@ -218,10 +332,35 @@ export default function Home() {
             Recent
           </div>
 
-          <div className="mt-3 px-3 text-sm text-black/40">
-            {hasMessages
-              ? "Current conversation"
-              : "No conversations yet"}
+          <div className="mt-3 space-y-1">
+            {conversationsLoading ? (
+              <div className="px-3 py-2 text-sm text-black/40">
+                Loading conversations...
+              </div>
+            ) : conversations.length === 0 ? (
+              <div className="px-3 py-2 text-sm text-black/40">
+                No conversations yet
+              </div>
+            ) : (
+              conversations.map((conversation) => (
+                <button
+                  key={conversation.id}
+                  type="button"
+                  className={`w-full rounded-xl px-3 py-2 text-left text-sm transition ${
+                    conversationId === conversation.id
+                      ? "bg-black/5 text-black"
+                      : "text-black/65 hover:bg-black/5"
+                  }`}
+                  onClick={() => {
+                    void loadConversation(conversation.id);
+                  }}
+                >
+                  <div className="truncate">
+                    {conversation.title || "Untitled conversation"}
+                  </div>
+                </button>
+              ))
+            )}
           </div>
 
           {/* Bottom */}
@@ -234,12 +373,13 @@ export default function Home() {
               Settings
             </button>
           </div>
+
         </aside>
 
-        {/* Main Content */}
+        {/* MAIN CONTENT */}
         <section className="flex min-h-screen min-w-0 flex-1 flex-col">
 
-          {/* Header */}
+          {/* HEADER */}
           <header className="flex h-16 shrink-0 items-center justify-between border-b border-black/5 px-5 md:px-8">
 
             <div className="flex items-center gap-3 md:hidden">
@@ -253,6 +393,7 @@ export default function Home() {
             </div>
 
             <div className="ml-auto flex items-center gap-3">
+
               <button
                 type="button"
                 className="rounded-lg px-3 py-2 text-sm text-black/60 transition hover:bg-black/5"
@@ -266,15 +407,18 @@ export default function Home() {
               >
                 PG
               </button>
+
             </div>
           </header>
 
-          {/* Chat / Empty State */}
+          {/* CHAT */}
           <div className="flex min-h-0 flex-1 flex-col">
 
-            {!hasMessages ? (
-              /* Empty State */
+            {!hasMessages && !conversationMessagesLoading ? (
+
+              /* EMPTY STATE */
               <div className="flex flex-1 items-center justify-center px-5 py-12">
+
                 <div className="w-full max-w-3xl">
 
                   <div className="mb-8 text-center">
@@ -317,11 +461,29 @@ export default function Home() {
                   </p>
 
                 </div>
+
               </div>
+
+            ) : conversationMessagesLoading && messages.length === 0 ? (
+
+              <div className="flex flex-1 items-center justify-center px-5 py-12">
+                <div className="text-center">
+                  <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-[#1f1f1f] text-sm font-semibold text-white">
+                    P
+                  </div>
+                  <p className="text-sm text-black/50">
+                    Loading conversation...
+                  </p>
+                </div>
+              </div>
+
             ) : (
-              /* Conversation */
+
+              /* CONVERSATION */
               <>
+
                 <div className="flex-1 overflow-y-auto px-5 py-8">
+
                   <div className="mx-auto w-full max-w-3xl space-y-7">
 
                     {messages.map((item) => (
@@ -332,42 +494,62 @@ export default function Home() {
                     ))}
 
                     {loading && (
+
                       <div className="flex items-start gap-3">
+
                         <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[#1f1f1f] text-xs font-semibold text-white">
                           P
                         </div>
 
                         <div className="pt-1">
+
                           <div className="mb-1 text-sm font-medium">
                             Pranexa
                           </div>
 
                           <div className="flex items-center gap-1 text-sm text-black/40">
                             <span>Thinking</span>
-                            <span className="animate-pulse">•</span>
+
+                            <span className="animate-pulse">
+                              •
+                            </span>
+
                             <span
                               className="animate-pulse"
-                              style={{ animationDelay: "150ms" }}
+                              style={{
+                                animationDelay: "150ms",
+                              }}
                             >
                               •
                             </span>
+
                             <span
                               className="animate-pulse"
-                              style={{ animationDelay: "300ms" }}
+                              style={{
+                                animationDelay: "300ms",
+                              }}
                             >
                               •
                             </span>
                           </div>
+
                         </div>
+
                       </div>
+
                     )}
 
                     <div ref={messagesEndRef} />
+
                   </div>
+
                 </div>
 
+                {/* COMPOSER */}
                 <div className="border-t border-black/5 bg-[#f7f7f5] px-5 py-4 md:px-8">
+
                   <div className="mx-auto w-full max-w-3xl">
+
                     <ChatComposer
                       message={message}
                       setMessage={setMessage}
@@ -382,16 +564,28 @@ export default function Home() {
                     <p className="mt-3 text-center text-xs text-black/30">
                       {modeLabels[mode]} · Pranexa can make mistakes.
                     </p>
+
                   </div>
+
                 </div>
+
               </>
+
             )}
+
           </div>
+
         </section>
+
       </div>
     </main>
   );
 }
+
+
+/* ============================================================
+   CHAT COMPOSER
+============================================================ */
 
 type ChatComposerProps = {
   message: string;
@@ -399,7 +593,9 @@ type ChatComposerProps = {
   loading: boolean;
   mode: ChatMode;
   textareaRef: React.RefObject<HTMLTextAreaElement | null>;
-  onSubmit: (event?: React.FormEvent<HTMLFormElement>) => void | Promise<void>;
+  onSubmit: (
+    event?: React.FormEvent<HTMLFormElement>
+  ) => void | Promise<void>;
   onKeyDown: (
     event: React.KeyboardEvent<HTMLTextAreaElement>
   ) => void;
@@ -417,7 +613,12 @@ function ChatComposer({
   onModeChange,
 }: ChatComposerProps) {
   return (
-    <form onSubmit={onSubmit}>
+    <form
+      onSubmit={(event) => {
+        void onSubmit(event);
+      }}
+    >
+
       <div className="rounded-2xl border border-black/10 bg-white p-2 shadow-sm transition focus-within:border-black/20 focus-within:shadow-md">
 
         <textarea
@@ -465,34 +666,48 @@ function ChatComposer({
 
           </div>
 
+          {/* SEND BUTTON */}
           <button
             type="submit"
             disabled={loading || !message.trim()}
             aria-label="Send message"
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#1f1f1f] text-lg font-semibold text-white shadow-sm transition hover:scale-105 hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-20"
+            title="Send message"
+            className="flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-xl bg-[#1f1f1f] text-lg font-semibold text-white shadow-sm transition hover:scale-105 hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-20"
           >
             {loading ? "…" : "↑"}
           </button>
 
         </div>
+
       </div>
+
     </form>
   );
 }
+
+
+/* ============================================================
+   MESSAGE BUBBLE
+============================================================ */
 
 type MessageBubbleProps = {
   message: Message;
 };
 
-function MessageBubble({ message }: MessageBubbleProps) {
+function MessageBubble({
+  message,
+}: MessageBubbleProps) {
   const isUser = message.role === "user";
 
   return (
     <div
       className={`flex items-start gap-3 ${
-        isUser ? "justify-end" : "justify-start"
+        isUser
+          ? "justify-end"
+          : "justify-start"
       }`}
     >
+
       {!isUser && (
         <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[#1f1f1f] text-xs font-semibold text-white">
           P
@@ -500,29 +715,175 @@ function MessageBubble({ message }: MessageBubbleProps) {
       )}
 
       <div
-        className={`max-w-[85%] ${
+        className={`max-w-[90%] ${
           isUser
             ? "rounded-2xl rounded-tr-md bg-[#1f1f1f] px-4 py-3 text-white"
-            : "pt-1"
+            : "min-w-0 pt-1"
         }`}
       >
+
         {!isUser && (
-          <div className="mb-1 text-sm font-medium">
+          <div className="mb-2 text-sm font-medium">
             Pranexa
           </div>
         )}
 
-        <p
-          className={`whitespace-pre-wrap text-sm leading-6 ${
-            isUser ? "text-white" : "text-black/80"
-          }`}
-        >
-          {message.content}
-        </p>
+        {isUser ? (
+
+          <p className="whitespace-pre-wrap text-sm leading-6 text-white">
+            {message.content}
+          </p>
+
+        ) : (
+
+          <div className="max-w-none text-black/80">
+
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
+              components={{
+
+                h1: ({ children }) => (
+                  <h1 className="mb-4 mt-6 text-2xl font-semibold tracking-tight first:mt-0">
+                    {children}
+                  </h1>
+                ),
+
+                h2: ({ children }) => (
+                  <h2 className="mb-3 mt-6 text-xl font-semibold tracking-tight first:mt-0">
+                    {children}
+                  </h2>
+                ),
+
+                h3: ({ children }) => (
+                  <h3 className="mb-2 mt-5 text-lg font-semibold">
+                    {children}
+                  </h3>
+                ),
+
+                p: ({ children }) => (
+                  <p className="mb-4 text-sm leading-7 text-black/75">
+                    {children}
+                  </p>
+                ),
+
+                ul: ({ children }) => (
+                  <ul className="mb-4 ml-5 list-disc space-y-1 text-sm leading-6">
+                    {children}
+                  </ul>
+                ),
+
+                ol: ({ children }) => (
+                  <ol className="mb-4 ml-5 list-decimal space-y-1 text-sm leading-6">
+                    {children}
+                  </ol>
+                ),
+
+                li: ({ children }) => (
+                  <li className="pl-1">
+                    {children}
+                  </li>
+                ),
+
+                strong: ({ children }) => (
+                  <strong className="font-semibold text-black">
+                    {children}
+                  </strong>
+                ),
+
+                blockquote: ({ children }) => (
+                  <blockquote className="my-4 border-l-4 border-black/15 pl-4 italic text-black/60">
+                    {children}
+                  </blockquote>
+                ),
+
+                hr: () => (
+                  <hr className="my-6 border-black/10" />
+                ),
+
+                code: ({
+                  className,
+                  children,
+                  ...props
+                }) => {
+                  const isBlock = Boolean(className);
+
+                  if (!isBlock) {
+                    return (
+                      <code
+                        className="rounded-md bg-black/5 px-1.5 py-0.5 font-mono text-[0.9em] text-black/80"
+                        {...props}
+                      >
+                        {children}
+                      </code>
+                    );
+                  }
+
+                  return (
+                    <code
+                      className={`${className ?? ""} block overflow-x-auto font-mono text-[13px] leading-6`}
+                      {...props}
+                    >
+                      {children}
+                    </code>
+                  );
+                },
+
+                pre: ({ children }) => (
+                  <pre className="my-5 overflow-x-auto rounded-xl bg-[#1f1f1f] p-4 text-white shadow-sm">
+                    {children}
+                  </pre>
+                ),
+
+                a: ({ children, href }) => (
+                  <a
+                    href={href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="underline underline-offset-2 hover:opacity-70"
+                  >
+                    {children}
+                  </a>
+                ),
+
+                table: ({ children }) => (
+                  <div className="my-5 overflow-x-auto rounded-xl border border-black/10">
+                    <table className="w-full border-collapse text-sm">
+                      {children}
+                    </table>
+                  </div>
+                ),
+
+                th: ({ children }) => (
+                  <th className="border-b border-black/10 bg-black/[0.03] px-3 py-2 text-left font-semibold">
+                    {children}
+                  </th>
+                ),
+
+                td: ({ children }) => (
+                  <td className="border-b border-black/5 px-3 py-2">
+                    {children}
+                  </td>
+                ),
+
+              }}
+            >
+              {message.content}
+            </ReactMarkdown>
+
+          </div>
+
+        )}
+
       </div>
+
     </div>
   );
 }
+
+
+/* ============================================================
+   CAPABILITY CARDS
+============================================================ */
 
 type CapabilityCardsProps = {
   mode: ChatMode;
@@ -536,6 +897,7 @@ function CapabilityCards({
   return (
     <div className="mt-8 grid grid-cols-1 gap-3 sm:grid-cols-3">
 
+      {/* EXPLAIN */}
       <button
         type="button"
         onClick={() => onModeChange("explain")}
@@ -545,7 +907,10 @@ function CapabilityCards({
             : "border-black/5 hover:border-black/10"
         }`}
       >
-        <div className="mb-3 text-lg">✦</div>
+
+        <div className="mb-3 text-lg">
+          ✦
+        </div>
 
         <div className="text-sm font-medium">
           Explain
@@ -554,8 +919,11 @@ function CapabilityCards({
         <div className="mt-1 text-xs leading-5 text-black/45">
           Turn difficult concepts into clear explanations.
         </div>
+
       </button>
 
+
+      {/* LEARN */}
       <button
         type="button"
         onClick={() => onModeChange("learn")}
@@ -565,7 +933,10 @@ function CapabilityCards({
             : "border-black/5 hover:border-black/10"
         }`}
       >
-        <div className="mb-3 text-lg">◎</div>
+
+        <div className="mb-3 text-lg">
+          ◇
+        </div>
 
         <div className="text-sm font-medium">
           Learn
@@ -574,8 +945,11 @@ function CapabilityCards({
         <div className="mt-1 text-xs leading-5 text-black/45">
           Learn step by step with an adaptive AI tutor.
         </div>
+
       </button>
 
+
+      {/* SOLVE */}
       <button
         type="button"
         onClick={() => onModeChange("solve")}
@@ -585,7 +959,10 @@ function CapabilityCards({
             : "border-black/5 hover:border-black/10"
         }`}
       >
-        <div className="mb-3 text-lg">⌁</div>
+
+        <div className="mb-3 text-lg">
+          ⌘
+        </div>
 
         <div className="text-sm font-medium">
           Solve
@@ -594,6 +971,7 @@ function CapabilityCards({
         <div className="mt-1 text-xs leading-5 text-black/45">
           Work through problems and understand the solution.
         </div>
+
       </button>
 
     </div>
