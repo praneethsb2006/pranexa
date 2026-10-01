@@ -1,6 +1,6 @@
 from fastapi import HTTPException
+from supabase import Client
 
-from app.database.supabase_client import supabase
 from app.schemas.chat import ChatMessage, ChatRequest, ChatResponse
 from app.services.ai_service import generate_ai_response
 
@@ -8,7 +8,12 @@ from app.services.ai_service import generate_ai_response
 MAX_HISTORY_MESSAGES = 50
 
 
-async def process_chat(request: ChatRequest) -> ChatResponse:
+async def process_chat(
+    request: ChatRequest,
+    *,
+    user_id: str,
+    supabase_client: Client,
+) -> ChatResponse:
     history: list[ChatMessage] = []
 
     # --------------------------------------------------
@@ -19,10 +24,11 @@ async def process_chat(request: ChatRequest) -> ChatResponse:
         conversation_id = request.conversation_id
 
         conversation_result = (
-            supabase
+            supabase_client
             .table("conversations")
             .select("id")
             .eq("id", conversation_id)
+            .eq("user_id", user_id)
             .limit(1)
             .execute()
         )
@@ -34,7 +40,7 @@ async def process_chat(request: ChatRequest) -> ChatResponse:
             )
 
         history_result = (
-            supabase
+            supabase_client
             .table("messages")
             .select("role,content")
             .eq("conversation_id", conversation_id)
@@ -49,10 +55,11 @@ async def process_chat(request: ChatRequest) -> ChatResponse:
 
     else:
         conversation_result = (
-            supabase
+            supabase_client
             .table("conversations")
             .insert({
                 "title": request.message[:100],
+                "user_id": user_id,
             })
             .execute()
         )
@@ -68,7 +75,7 @@ async def process_chat(request: ChatRequest) -> ChatResponse:
     # --------------------------------------------------
 
     user_message_result = (
-        supabase
+        supabase_client
         .table("messages")
         .insert({
             "conversation_id": conversation_id,
@@ -96,7 +103,7 @@ async def process_chat(request: ChatRequest) -> ChatResponse:
     # --------------------------------------------------
 
     assistant_message_result = (
-        supabase
+        supabase_client
         .table("messages")
         .insert({
             "conversation_id": conversation_id,
