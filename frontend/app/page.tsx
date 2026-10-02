@@ -3,6 +3,9 @@
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import type { Session } from "@supabase/supabase-js";
+import AuthForm from "@/components/AuthForm";
+import { supabase } from "@/lib/supabase";
 
 type ChatMode = "explain" | "learn" | "solve";
 
@@ -36,6 +39,8 @@ export default function Home() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(false);
   const [mode, setMode] = useState<ChatMode>("explain");
+  const [sessionLoading, setSessionLoading] = useState(true);
+  const [session, setSession] = useState<Session | null>(null);
 
   // ---------------------------------------------------------
   // Conversation ID
@@ -46,28 +51,71 @@ export default function Home() {
   const [conversationMessagesLoading, setConversationMessagesLoading] = useState(false);
 
   useEffect(() => {
-  const loadConversations = async () => {
-    try {
-      const response = await fetch(
-        "http://127.0.0.1:8000/conversations"
-      );
+    let isMounted = true;
 
-      if (!response.ok) {
-        throw new Error("Failed to load conversations");
+    const initializeSession = async () => {
+      const {
+        data: { session: activeSession },
+      } = await supabase.auth.getSession();
+
+      if (!isMounted) {
+        return;
       }
 
-      const data = await response.json();
+      setSession(activeSession);
+      setSessionLoading(false);
+    };
 
-      setConversations(data.conversations ?? []);
-    } catch (error) {
-      console.error("Failed to load conversations:", error);
-    } finally {
+    void initializeSession();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      if (!isMounted) {
+        return;
+      }
+
+      setSession(nextSession);
+      setConversations([]);
       setConversationsLoading(false);
-    }
-  };
+      setSessionLoading(false);
+    });
 
-  loadConversations();
-}, []);
+    return () => {
+      isMounted = false;
+      subscription.unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!session) {
+      return;
+    }
+
+    const loadConversations = async () => {
+      setConversationsLoading(true);
+
+      try {
+        const response = await fetch(
+          "http://127.0.0.1:8000/conversations"
+        );
+
+        if (!response.ok) {
+          throw new Error("Failed to load conversations");
+        }
+
+        const data = await response.json();
+
+        setConversations(data.conversations ?? []);
+      } catch (error) {
+        console.error("Failed to load conversations:", error);
+      } finally {
+        setConversationsLoading(false);
+      }
+    };
+
+    void loadConversations();
+  }, [session]);
 
   const loadConversation = async (selectedConversationId: string) => {
     if (loading || conversationMessagesLoading) {
@@ -245,6 +293,20 @@ export default function Home() {
   };
 
   const hasMessages = messages.length > 0;
+
+  if (sessionLoading) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-[#f7f7f5] px-5 py-12 text-[#1f1f1f]">
+        <div className="text-sm font-medium text-black/55">
+          Loading Pranexa...
+        </div>
+      </main>
+    );
+  }
+
+  if (!session) {
+    return <AuthForm />;
+  }
 
   return (
     <main className="min-h-screen bg-[#f7f7f5] text-[#1f1f1f]">
