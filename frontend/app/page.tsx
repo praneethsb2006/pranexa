@@ -5,6 +5,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Session } from "@supabase/supabase-js";
 import AuthForm from "@/components/AuthForm";
+import { authenticatedFetch } from "@/lib/api";
 import { supabase } from "@/lib/supabase";
 
 type ChatMode = "explain" | "learn" | "solve";
@@ -96,7 +97,7 @@ export default function Home() {
       setConversationsLoading(true);
 
       try {
-        const response = await fetch(
+        const response = await authenticatedFetch(
           "http://127.0.0.1:8000/conversations"
         );
 
@@ -126,7 +127,7 @@ export default function Home() {
     setConversationId(selectedConversationId);
 
     try {
-      const response = await fetch(
+      const response = await authenticatedFetch(
         `http://127.0.0.1:8000/conversations/${selectedConversationId}/messages`
       );
 
@@ -194,7 +195,7 @@ export default function Home() {
     setLoading(true);
 
     try {
-      const apiResponse = await fetch(API_URL, {
+      const apiResponse = await authenticatedFetch(API_URL, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
