@@ -3,6 +3,7 @@ from typing import Protocol
 
 from dotenv import load_dotenv
 from google import genai
+from google.genai.errors import ServerError
 
 from app.schemas.chat import ChatMessage
 
@@ -17,6 +18,10 @@ class AIProvider(Protocol):
         history: list[ChatMessage],
     ) -> str:
         ...
+
+
+class AIServiceUnavailable(RuntimeError):
+    """Raised when the configured AI provider is temporarily unavailable."""
 
 
 class GeminiAIProvider:
@@ -95,10 +100,17 @@ Instructions:
 Respond as a helpful tutor.
 """
 
-        response = await self.client.aio.models.generate_content(
-            model="gemini-3.6-flash",
-            contents=prompt,
-        )
+        try:
+            response = await self.client.aio.models.generate_content(
+                model="gemini-3.6-flash",
+                contents=prompt,
+            )
+        except ServerError as error:
+            if error.code != 503:
+                raise
+            raise AIServiceUnavailable(
+                "Pranexa's AI service is temporarily busy. Please try again in a moment."
+            ) from error
 
         if not response.text:
             raise RuntimeError(

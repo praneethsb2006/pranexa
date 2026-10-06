@@ -2,7 +2,7 @@ from fastapi import HTTPException
 from supabase import Client
 
 from app.schemas.chat import ChatMessage, ChatRequest, ChatResponse
-from app.services.ai_service import generate_ai_response
+from app.services.ai_service import AIServiceUnavailable, generate_ai_response
 
 
 MAX_HISTORY_MESSAGES = 50
@@ -53,7 +53,23 @@ async def process_chat(
             for message in reversed(history_result.data or [])
         ]
 
-    else:
+    # --------------------------------------------------
+    # 2. Generate AI response before persisting the new turn
+    # --------------------------------------------------
+
+    try:
+        response = await generate_ai_response(
+            message=request.message,
+            mode=request.mode,
+            history=history,
+        )
+    except AIServiceUnavailable as error:
+        raise HTTPException(
+            status_code=503,
+            detail=str(error),
+        ) from None
+
+    if not request.conversation_id:
         conversation_result = (
             supabase_client
             .table("conversations")
@@ -67,11 +83,10 @@ async def process_chat(
         if not conversation_result.data:
             raise RuntimeError("Failed to create conversation.")
 
-        conversation = conversation_result.data[0]
-        conversation_id = conversation["id"]
+        conversation_id = conversation_result.data[0]["id"]
 
     # --------------------------------------------------
-    # 2. Save user's message
+    # 3. Save the successful user turn
     # --------------------------------------------------
 
     user_message_result = (
@@ -87,16 +102,6 @@ async def process_chat(
 
     if not user_message_result.data:
         raise RuntimeError("Failed to save user message.")
-
-    # --------------------------------------------------
-    # 3. Generate AI response
-    # --------------------------------------------------
-
-    response = await generate_ai_response(
-        message=request.message,
-        mode=request.mode,
-        history=history,
-    )
 
     # --------------------------------------------------
     # 4. Save AI response

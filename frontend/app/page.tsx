@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Session } from "@supabase/supabase-js";
@@ -27,7 +27,7 @@ type Conversation = {
   title: string;
   created_at: string;
 };
-const API_URL = "http://127.0.0.1:8000/chat";
+const API_URL = "http://localhost:8000/chat";
 
 const modeLabels: Record<ChatMode, string> = {
   explain: "Explain mode",
@@ -88,6 +88,19 @@ export default function Home() {
     };
   }, []);
 
+  const fetchConversations = useCallback(async (): Promise<Conversation[]> => {
+    const response = await authenticatedFetch(
+      "http://localhost:8000/conversations"
+    );
+
+    if (!response.ok) {
+      throw new Error("Failed to load conversations");
+    }
+
+    const data = await response.json();
+    return data.conversations ?? [];
+  }, []);
+
   useEffect(() => {
     if (!session) {
       return;
@@ -97,17 +110,7 @@ export default function Home() {
       setConversationsLoading(true);
 
       try {
-        const response = await authenticatedFetch(
-          "http://127.0.0.1:8000/conversations"
-        );
-
-        if (!response.ok) {
-          throw new Error("Failed to load conversations");
-        }
-
-        const data = await response.json();
-
-        setConversations(data.conversations ?? []);
+        setConversations(await fetchConversations());
       } catch (error) {
         console.error("Failed to load conversations:", error);
       } finally {
@@ -116,7 +119,7 @@ export default function Home() {
     };
 
     void loadConversations();
-  }, [session]);
+  }, [fetchConversations, session]);
 
   const loadConversation = async (selectedConversationId: string) => {
     if (loading || conversationMessagesLoading) {
@@ -128,7 +131,7 @@ export default function Home() {
 
     try {
       const response = await authenticatedFetch(
-        `http://127.0.0.1:8000/conversations/${selectedConversationId}/messages`
+        `http://localhost:8000/conversations/${selectedConversationId}/messages`
       );
 
       if (!response.ok) {
@@ -193,6 +196,7 @@ export default function Home() {
 
     setMessage("");
     setLoading(true);
+    let aiServiceErrorMessage: string | null = null;
 
     try {
       const apiResponse = await authenticatedFetch(API_URL, {
@@ -209,6 +213,13 @@ export default function Home() {
       });
 
       if (!apiResponse.ok) {
+        if (apiResponse.status === 503) {
+          const errorData: { detail?: unknown } = await apiResponse.json();
+          if (typeof errorData.detail === "string") {
+            aiServiceErrorMessage = errorData.detail;
+          }
+        }
+
         throw new Error(
           `Backend returned status ${apiResponse.status}`
         );
@@ -222,6 +233,14 @@ export default function Home() {
 
       if (data.conversation_id) {
         setConversationId(data.conversation_id);
+
+        if (!conversationId) {
+          try {
+            setConversations(await fetchConversations());
+          } catch (error) {
+            console.error("Failed to refresh conversations after chat:", error);
+          }
+        }
       }
 
       const assistantMessage: Message = {
@@ -243,6 +262,7 @@ export default function Home() {
         id: crypto.randomUUID(),
         role: "assistant",
         content:
+          aiServiceErrorMessage ??
           "I couldn't connect to the Pranexa backend. Please make sure the FastAPI server is running and try again.",
       };
 

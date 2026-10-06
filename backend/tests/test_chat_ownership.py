@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from app.api.dependencies.auth import AuthenticatedUser, get_authenticated_user
 from app.main import app
 from app.schemas.chat import ChatMessage
+from app.services.ai_service import AIServiceUnavailable
 
 
 class QueryResult:
@@ -145,6 +146,45 @@ class ChatOwnershipTests(unittest.TestCase):
         self.assertEqual(conversation["user_id"], "user-alice")
         self.assertNotEqual(conversation["user_id"], "user-bob")
         self.assertEqual(response.json()["response"], "AI response")
+
+    def test_gemini_unavailability_returns_503_without_persisting_failed_turn(self):
+        self.ai_mock.side_effect = AIServiceUnavailable(
+            "Pranexa's AI service is temporarily busy. Please try again in a moment."
+        )
+
+        response = self.http.post(
+            "/chat",
+            headers=self.headers("alice"),
+            json={"message": "Question", "mode": "explain"},
+        )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(
+            response.json()["detail"],
+            "Pranexa's AI service is temporarily busy. Please try again in a moment.",
+        )
+        self.assertEqual(self.database.tables["conversations"], [])
+        self.assertEqual(self.database.tables["messages"], [])
+
+    def test_gemini_unavailability_does_not_persist_message_to_existing_conversation(self):
+        conversation_id = self.create_conversation("alice", "Prior question")
+        messages_before_failure = list(self.database.tables["messages"])
+        self.ai_mock.side_effect = AIServiceUnavailable(
+            "Pranexa's AI service is temporarily busy. Please try again in a moment."
+        )
+
+        response = self.http.post(
+            "/chat",
+            headers=self.headers("alice"),
+            json={
+                "message": "Retryable question",
+                "mode": "explain",
+                "conversation_id": conversation_id,
+            },
+        )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(self.database.tables["messages"], messages_before_failure)
 
     def test_user_can_continue_own_conversation(self):
         conversation_id = self.create_conversation("alice")
