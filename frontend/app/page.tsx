@@ -50,6 +50,8 @@ export default function Home() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [conversationsLoading, setConversationsLoading] = useState(true);
   const [conversationMessagesLoading, setConversationMessagesLoading] = useState(false);
+  const [conversationLoadError, setConversationLoadError] = useState<string | null>(null);
+  const conversationLoadGeneration = useRef(0);
 
   useEffect(() => {
     let isMounted = true;
@@ -122,12 +124,16 @@ export default function Home() {
   }, [fetchConversations, session]);
 
   const loadConversation = async (selectedConversationId: string) => {
-    if (loading || conversationMessagesLoading) {
+    if (loading) {
       return;
     }
 
+    const requestGeneration = ++conversationLoadGeneration.current;
     setConversationMessagesLoading(true);
+    setConversationLoadError(null);
     setConversationId(selectedConversationId);
+    setMessages([]);
+    setMessage("");
 
     try {
       const response = await authenticatedFetch(
@@ -142,6 +148,10 @@ export default function Home() {
 
       const data = await response.json();
 
+      if (requestGeneration !== conversationLoadGeneration.current) {
+        return;
+      }
+
       const loadedMessages: Message[] = (data.messages ?? []).map(
         (item: {
           id: string;
@@ -155,11 +165,19 @@ export default function Home() {
       );
 
       setMessages(loadedMessages);
-      setMessage("");
     } catch (error) {
+      if (requestGeneration !== conversationLoadGeneration.current) {
+        return;
+      }
+
       console.error("Failed to load conversation:", error);
+      setConversationLoadError(
+        "Unable to load conversation history. Please try again."
+      );
     } finally {
-      setConversationMessagesLoading(false);
+      if (requestGeneration === conversationLoadGeneration.current) {
+        setConversationMessagesLoading(false);
+      }
     }
   };
 
@@ -179,7 +197,12 @@ export default function Home() {
 
     const userMessage = message.trim();
 
-    if (!userMessage || loading) {
+    if (
+      !userMessage ||
+      loading ||
+      conversationMessagesLoading ||
+      conversationLoadError
+    ) {
       return;
     }
 
@@ -299,6 +322,9 @@ export default function Home() {
 
     // IMPORTANT:
     // A new chat must get a new conversation.
+    conversationLoadGeneration.current += 1;
+    setConversationMessagesLoading(false);
+    setConversationLoadError(null);
     setConversationId(null);
 
     textareaRef.current?.focus();
@@ -483,7 +509,27 @@ export default function Home() {
           {/* CHAT */}
           <div className="flex min-h-0 flex-1 flex-col">
 
-            {!hasMessages && !conversationMessagesLoading ? (
+            {conversationLoadError ? (
+              <div className="flex flex-1 items-center justify-center px-5 py-12">
+                <div className="text-center">
+                  <p role="alert" className="text-sm text-red-700">
+                    {conversationLoadError}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (conversationId) {
+                        void loadConversation(conversationId);
+                      }
+                    }}
+                    disabled={!conversationId || conversationMessagesLoading || loading}
+                    className="mt-4 rounded-lg bg-[#1f1f1f] px-4 py-2 text-sm font-medium text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Retry
+                  </button>
+                </div>
+              </div>
+            ) : !hasMessages && !conversationMessagesLoading ? (
 
               /* EMPTY STATE */
               <div className="flex flex-1 items-center justify-center px-5 py-12">
@@ -511,7 +557,7 @@ export default function Home() {
                   <ChatComposer
                     message={message}
                     setMessage={setMessage}
-                    loading={loading}
+                    loading={loading || conversationMessagesLoading || Boolean(conversationLoadError)}
                     mode={mode}
                     textareaRef={textareaRef}
                     onSubmit={handleSubmit}
@@ -622,7 +668,7 @@ export default function Home() {
                     <ChatComposer
                       message={message}
                       setMessage={setMessage}
-                      loading={loading}
+                      loading={loading || conversationMessagesLoading || Boolean(conversationLoadError)}
                       mode={mode}
                       textareaRef={textareaRef}
                       onSubmit={handleSubmit}
