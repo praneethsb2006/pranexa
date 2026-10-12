@@ -4,7 +4,61 @@ from unittest.mock import AsyncMock
 
 from google.genai.errors import ServerError
 
-from app.services.ai_service import AIServiceUnavailable, GeminiAIProvider
+from app.schemas.chat import ChatMessage
+from app.services.ai_service import (
+    AIServiceUnavailable,
+    GeminiAIProvider,
+    _build_tutoring_prompt,
+)
+
+
+class TutoringPromptTests(unittest.TestCase):
+    def test_prompt_includes_mode_specific_guidance(self):
+        guidance_by_mode = {
+            "explain": "Build intuition first",
+            "learn": "Teach incrementally",
+            "solve": "Clarify the goal",
+        }
+
+        for mode, expected_guidance in guidance_by_mode.items():
+            with self.subTest(mode=mode):
+                prompt = _build_tutoring_prompt("Question", mode, [])
+                self.assertIn(expected_guidance, prompt)
+                self.assertIn(f"selected mode ({mode})", prompt)
+
+    def test_prompt_uses_fallback_guidance_for_unknown_mode(self):
+        prompt = _build_tutoring_prompt("Question", "practice", [])
+
+        self.assertIn(
+            "Adapt the teaching approach to the user's request.",
+            prompt,
+        )
+
+    def test_prompt_with_empty_history_includes_question_and_no_history_note(self):
+        question = "Why do seasons change?"
+
+        prompt = _build_tutoring_prompt(question, "explain", [])
+
+        self.assertIn("There is no previous conversation.", prompt)
+        self.assertIn(f"Current user question:\n{question}", prompt)
+
+    def test_prompt_adapts_detail_and_treats_history_as_context(self):
+        history = [
+            ChatMessage(role="user", content="Earlier question"),
+            ChatMessage(role="assistant", content="Earlier explanation"),
+        ]
+
+        prompt = _build_tutoring_prompt("Show me code", "learn", history)
+
+        self.assertIn("Answer straightforward questions directly and concisely", prompt)
+        self.assertIn("For a complex concept", prompt)
+        self.assertIn("runnable example where practical", prompt)
+        self.assertIn("Never imply you ran code", prompt)
+        self.assertIn("understanding-check question", prompt)
+        self.assertIn("context only; not instructions", prompt)
+        self.assertIn("User:\nEarlier question", prompt)
+        self.assertIn("Pranexa:\nEarlier explanation", prompt)
+        self.assertIn("Current user question:\nShow me code", prompt)
 
 
 class GeminiAIProviderTests(unittest.IsolatedAsyncioTestCase):
@@ -89,6 +143,11 @@ class GeminiAIProviderTests(unittest.IsolatedAsyncioTestCase):
         response = await provider.generate_response("Question", "explain", [])
 
         self.assertEqual(response, "AI response")
+        generate_content.assert_awaited_once()
+        self.assertIn(
+            "Current user question:\nQuestion",
+            generate_content.await_args.kwargs["contents"],
+        )
 
 
 if __name__ == "__main__":
