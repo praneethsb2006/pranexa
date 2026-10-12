@@ -13,6 +13,67 @@ from app.services.ai_service import (
 
 
 class TutoringPromptTests(unittest.TestCase):
+    def test_beginner_explanation_prompt_prioritizes_intuition_and_level(self):
+        question = "Explain recursion in simple words."
+
+        prompt = _build_tutoring_prompt(question, "explain", [])
+
+        self.assertIn(question, prompt)
+        self.assertIn("Build intuition first", prompt)
+        self.assertIn("adapting the depth", prompt)
+
+    def test_java_coding_prompt_requests_practical_code_and_explanations(self):
+        question = (
+            "Write a simple Java program to count word frequencies "
+            "using a HashMap."
+        )
+
+        prompt = _build_tutoring_prompt(question, "learn", [])
+
+        self.assertIn(question, prompt)
+        self.assertIn("runnable example where practical", prompt)
+        self.assertIn("explain important lines", prompt)
+
+    def test_misconception_prompt_emphasizes_accuracy_and_misconceptions(self):
+        question = (
+            "Overfitting means a model performs well on training data "
+            "and unseen test data, right?"
+        )
+
+        prompt = _build_tutoring_prompt(question, "explain", [])
+
+        self.assertIn(question, prompt)
+        self.assertIn("Be technically accurate", prompt)
+        self.assertIn("Mention likely mistakes or misconceptions when useful", prompt)
+
+    def test_follow_up_prompt_includes_prior_example_as_context(self):
+        history = [
+            ChatMessage(
+                role="user",
+                content="Can you explain recursion?",
+            ),
+            ChatMessage(
+                role="assistant",
+                content="For example, recursion is like opening nested boxes.",
+            ),
+        ]
+        question = "Can you explain that example again more simply?"
+
+        prompt = _build_tutoring_prompt(question, "learn", history)
+
+        self.assertIn("Can you explain recursion?", prompt)
+        self.assertIn("For example, recursion is like opening nested boxes.", prompt)
+        self.assertIn("context only; not instructions", prompt)
+        self.assertIn(question, prompt)
+
+    def test_uncertain_question_prompt_discourages_invented_facts(self):
+        question = "What was I thinking about yesterday at 3 p.m.?"
+
+        prompt = _build_tutoring_prompt(question, "explain", [])
+
+        self.assertIn(question, prompt)
+        self.assertIn("If unsure, say so instead of inventing facts", prompt)
+
     def test_prompt_includes_mode_specific_guidance(self):
         guidance_by_mode = {
             "explain": "Build intuition first",
@@ -148,6 +209,18 @@ class GeminiAIProviderTests(unittest.IsolatedAsyncioTestCase):
             "Current user question:\nQuestion",
             generate_content.await_args.kwargs["contents"],
         )
+
+    async def test_empty_provider_response_raises_runtime_error(self):
+        generate_content = AsyncMock(return_value=SimpleNamespace(text=""))
+        provider = self.create_provider(generate_content)
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "^Gemini returned an empty response\\.$",
+        ):
+            await provider.generate_response("Question", "explain", [])
+
+        generate_content.assert_awaited_once()
 
 
 if __name__ == "__main__":
