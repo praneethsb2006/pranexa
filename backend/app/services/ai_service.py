@@ -1,4 +1,6 @@
+import logging
 import os
+import re
 from typing import Protocol
 
 from dotenv import load_dotenv
@@ -8,6 +10,31 @@ from google.genai.errors import ServerError
 from app.schemas.chat import ChatMessage
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
+
+
+def _provider_request_id(error: ServerError) -> str | None:
+    headers = getattr(error.response, "headers", None)
+    if headers is None:
+        return None
+
+    request_id_headers = {
+        "request-id",
+        "x-correlation-id",
+        "x-goog-request-id",
+        "x-request-id",
+    }
+
+    for name, value in headers.items():
+        if (
+            name.lower() in request_id_headers
+            and isinstance(value, str)
+            and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", value)
+        ):
+            return value
+
+    return None
 
 
 class AIProvider(Protocol):
@@ -108,6 +135,20 @@ Respond as a helpful tutor.
         except ServerError as error:
             if error.code != 503:
                 raise
+
+            request_id = _provider_request_id(error)
+            provider_status = re.sub(
+                r"[^A-Za-z0-9_.-]",
+                "_",
+                str(error.status),
+            )[:64]
+            logger.warning(
+                "Gemini provider returned an unavailable response "
+                "(code=%s, status=%s%s)",
+                error.code,
+                provider_status,
+                f", request_id={request_id}" if request_id else "",
+            )
             raise AIServiceUnavailable(
                 "Pranexa's AI service is temporarily busy. Please try again in a moment."
             ) from error

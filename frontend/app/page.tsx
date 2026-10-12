@@ -39,6 +39,7 @@ export default function Home() {
   const [message, setMessage] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
   const [mode, setMode] = useState<ChatMode>("explain");
   const [sessionLoading, setSessionLoading] = useState(true);
   const [session, setSession] = useState<Session | null>(null);
@@ -131,6 +132,7 @@ export default function Home() {
     const requestGeneration = ++conversationLoadGeneration.current;
     setConversationMessagesLoading(true);
     setConversationLoadError(null);
+    setSendError(null);
     setConversationId(selectedConversationId);
     setMessages([]);
     setMessage("");
@@ -217,9 +219,10 @@ export default function Home() {
       userMessageObject,
     ]);
 
-    setMessage("");
+    setSendError(null);
     setLoading(true);
     let aiServiceErrorMessage: string | null = null;
+    let responseStatus: number | null = null;
 
     try {
       const apiResponse = await authenticatedFetch(API_URL, {
@@ -236,10 +239,16 @@ export default function Home() {
       });
 
       if (!apiResponse.ok) {
+        responseStatus = apiResponse.status;
+
         if (apiResponse.status === 503) {
-          const errorData: { detail?: unknown } = await apiResponse.json();
-          if (typeof errorData.detail === "string") {
-            aiServiceErrorMessage = errorData.detail;
+          try {
+            const errorData: { detail?: unknown } = await apiResponse.json();
+            if (typeof errorData.detail === "string") {
+              aiServiceErrorMessage = errorData.detail;
+            }
+          } catch (error) {
+            console.error("Failed to read AI service error response:", error);
           }
         }
 
@@ -249,6 +258,7 @@ export default function Home() {
       }
 
       const data: ChatResponse = await apiResponse.json();
+      setMessage("");
 
       // -----------------------------------------------------
       // Save the conversation ID returned by the backend
@@ -281,18 +291,24 @@ export default function Home() {
     } catch (error) {
       console.error("Pranexa error:", error);
 
-      const errorMessage: Message = {
-        id: crypto.randomUUID(),
-        role: "assistant",
-        content:
-          aiServiceErrorMessage ??
-          "I couldn't connect to the Pranexa backend. Please make sure the FastAPI server is running and try again.",
-      };
+      setMessage(userMessage);
+      setMessages((currentMessages) =>
+        currentMessages.filter((item) => item.id !== userMessageObject.id)
+      );
 
-      setMessages((currentMessages) => [
-        ...currentMessages,
-        errorMessage,
-      ]);
+      const authenticationError =
+        error instanceof Error &&
+        (error.message === "Unable to retrieve the authentication session." ||
+          error.message === "Authentication required. Please sign in and try again.");
+
+      setSendError(
+        authenticationError
+          ? error.message
+          : responseStatus !== null
+            ? aiServiceErrorMessage ??
+              `Pranexa could not process your request (HTTP ${responseStatus}). Please try again.`
+            : "The request outcome could not be confirmed. Your message may or may not have been saved. Review the conversation before deciding whether to send it again."
+      );
     } finally {
       setLoading(false);
       textareaRef.current?.focus();
@@ -318,6 +334,7 @@ export default function Home() {
 
     setMessages([]);
     setMessage("");
+    setSendError(null);
     setMode("explain");
 
     // IMPORTANT:
@@ -441,11 +458,12 @@ export default function Home() {
                 <button
                   key={conversation.id}
                   type="button"
+                  disabled={loading}
                   className={`w-full rounded-xl px-3 py-2 text-left text-sm transition ${
                     conversationId === conversation.id
                       ? "bg-black/5 text-black"
                       : "text-black/65 hover:bg-black/5"
-                  }`}
+                  } disabled:cursor-not-allowed disabled:opacity-40`}
                   onClick={() => {
                     void loadConversation(conversation.id);
                   }}
@@ -565,6 +583,12 @@ export default function Home() {
                     onModeChange={selectMode}
                   />
 
+                  {sendError && (
+                    <p role="alert" className="mt-3 text-sm text-red-700">
+                      {sendError}
+                    </p>
+                  )}
+
                   <CapabilityCards
                     mode={mode}
                     onModeChange={selectMode}
@@ -675,6 +699,12 @@ export default function Home() {
                       onKeyDown={handleTextareaKeyDown}
                       onModeChange={selectMode}
                     />
+
+                    {sendError && (
+                      <p role="alert" className="mt-3 text-sm text-red-700">
+                        {sendError}
+                      </p>
+                    )}
 
                     <p className="mt-3 text-center text-xs text-black/30">
                       {modeLabels[mode]} · Pranexa can make mistakes.
